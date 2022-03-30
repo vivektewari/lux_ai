@@ -1,12 +1,12 @@
 import torch.nn as nn
 
 class NeuralNet(nn.Module):
-    def __init__(self, sizes=[25,12,12], act_funcs=[]):
+    def __init__(self, sizes=[25,12,12], activation_funcs=[]):
         super(NeuralNet, self).__init__()
         self.layers= nn.ModuleList()
         for i in range(1,len(sizes)):
             self.layers.append(nn.Linear(sizes[i-1], sizes[i]))
-        self.act_funcs = act_funcs
+        self.act_funcs = activation_funcs
         self.init_weight()
 
     def forward(self, x):

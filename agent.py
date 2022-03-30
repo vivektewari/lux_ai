@@ -1,8 +1,9 @@
-rom dataLoaders import *
+from dataLoaders import *
 from catalyst.dl import SupervisedRunner, CallbackOrder, Callback, CheckpointCallback
 from config import *
-from funcs import get_dict_from_class,count_parameters
-from models import FeatureExtractor,modelling_3d
+from auxilary import *
+from funcs import get_dict_from_class, count_parameters
+
 from losses import BCELoss
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -14,13 +15,24 @@ from lux.game_map import Cell, RESOURCE_TYPES
 from lux.constants import Constants
 from lux.game_constants import GAME_CONSTANTS
 from lux import annotate
-from catalyst.dl import SupervisedRunner, CallbackOrder, Callback, CheckpointCallback
+
+
 DIRECTIONS = Constants.DIRECTIONS
 game_state = None
 
 
 def agent(observation, configuration):
-    global game_state
+    """
+    Algorithm:
+    initialization for step 0>collects state from game_state_object> use fn:input state to get state in tensor>execute fn:model.predict to get
+    get action values>choose episilon greedy action ftn:choose_action> update last state output value with
+    q_learning from action> run optimization step for 1 epoch to change papram values ftn:model.fit> load currect state
+    into last state> next iteration
+    :param observation:
+    :param configuration:
+    :return: Actions in form of string list
+    """
+    global game_state,model,map_size,last_q_s_a,last_player_units,criterion,optimizer
 
     ### Do not edit ###
     if observation["step"] == 0:
@@ -28,55 +40,49 @@ def agent(observation, configuration):
         game_state._initialize(observation["updates"])
         game_state._update(observation["updates"][2:])
         game_state.id = observation.player
+        map_size = observation['width']
+
+        #getting model params and model|start
+        model_param_= get_dict_from_class(model_param)
+        model_param_['sizes'][0]=(map_size**2)*state_dim_per_square+1
+        model_param_['sizes'][-1]=(map_size**2)*action_count_per_square
+        model = NeuralNet(**model_param_)
+
+        optimizer = optim.SGD(model.parameters(), lr=lr)
+        # getting model params and model|stop
+        # last state initialization
+        last_q_s_a = None
+        last_player_units=None
     else:
         game_state._update(observation["updates"])
-    
     actions = []
+    state_tensor,player_units = input_state(game_state,observation)  # state tensor:1d player_units:unit_kkeper object
+    model_output = model(state_tensor)  # output:1d
+    q_s_a= model_output.reshape((map_size, map_size, action_count_per_square)) # reshaping to position*actions
+    actions,player_unit_dict=choose_action(action_value=q_s_a,player_units=player_units ,game_map=game_state.map)
+    if last_q_s_a is not None:#update the Q learning matrix
+        reward = observation['reward']
+        for u in  last_player_units:
+            if u.choosen_action_index !=-1:
+                q_last_state=last_q_s_a[u.obj.pos.x,u.obj.pos.y,u.get_index()]
+                if u.id in player_unit_dict.keys(): q_state=player_unit_dict[u.id].action_value
+                else: q_state=extinct_value
+                temporal_difference=reward+gamma*q_state-q_last_state
+                q_last_changed = q_last_state + step_size*temporal_difference
+                last_q_s_a[u.obj.pos.x,u.obj.pos.y, u.get_index()]=q_last_changed
 
-    ### AI Code goes down here! ### 
-    player = game_state.players[observation.player]
-    opponent = game_state.players[(observation.player + 1) % 2]
-    width, height = game_state.map.width, game_state.map.height
-
-    resource_tiles: list[Cell] = []
-    for y in range(height):
-        for x in range(width):
-            cell = game_state.map.get_cell(x, y)
-            if cell.has_resource():
-                resource_tiles.append(cell)
-
-    # we iterate over all our units and do something with them
-    for unit in player.units:
-        if unit.is_worker() and unit.can_act():
-            closest_dist = math.inf
-            closest_resource_tile = None
-            if unit.get_cargo_space_left() > 0:
-                # if the unit is a worker and we have space in cargo, lets find the nearest resource tile and try to mine it
-                for resource_tile in resource_tiles:
-                    if resource_tile.resource.type == Constants.RESOURCE_TYPES.COAL and not player.researched_coal(): continue
-                    if resource_tile.resource.type == Constants.RESOURCE_TYPES.URANIUM and not player.researched_uranium(): continue
-                    dist = resource_tile.pos.distance_to(unit.pos)
-                    if dist < closest_dist:
-                        closest_dist = dist
-                        closest_resource_tile = resource_tile
-                if closest_resource_tile is not None:
-                    actions.append(unit.move(unit.pos.direction_to(closest_resource_tile.pos)))
-            else:
-                # if unit is a worker and there is no cargo space left, and we have cities, lets return to them
-                if len(player.cities) > 0:
-                    closest_dist = math.inf
-                    closest_city_tile = None
-                    for k, city in player.cities.items():
-                        for city_tile in city.citytiles:
-                            dist = city_tile.pos.distance_to(unit.pos)
-                            if dist < closest_dist:
-                                closest_dist = dist
-                                closest_city_tile = city_tile
-                    if closest_city_tile is not None:
-                        move_dir = unit.pos.direction_to(closest_city_tile.pos)
-                        actions.append(unit.move(move_dir))
-
-    # you can add debug an  notations using the functions in the annotate object
-    # actions.append(annotate.circle(0, 0))
-    actions=['m u_1 e','m u_2 e']
+        #model fitting prep and run
+        model = perform_fit(model=model,x=state_tensor,y=last_q_s_a.flatten(),data_loader=data_loader,criterion=criterion,optimizer=optimizer)
+    last_player_units=player_units
+    last_q_s_a = q_s_a
+    print(actions)
     return actions
+
+
+if __name__ == "__main__":
+    import torch.nn.functional as F
+    import torch
+
+    c = NeuralNet(sizes=[5, 12, 12], act_funcs=[F.relu_ for i in range(3)])
+    d = c(torch.tensor([i for i in range(5)], dtype=torch.float32))
+    print(d.shape)

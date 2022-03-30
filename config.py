@@ -5,52 +5,49 @@ import os
 from dataLoaders import *
 from losses import *
 from models import *
+import torch.optim as optim
+
 from param_options import *
 
-#from funcs import *
+#fit related functions
+loss_func = LocalizatioLoss()
+model = NeuralNet
+data_loader = lux_ai_data
+model_param = param_1
+lr=0.05
+
+criterion = loss_func
+
+#q learning
+gamma = 0.95
+step_size = 0.5
+
+
+# game params
+extinct_value=-100
+unit_action_count = 7
+cart_action_count=6
+city_action_count = 2
+unit_state_dim = 4
+cart_state_dim = 4
+city_state_dim = 3
+resources_state_dim = 1
+num_resources=3
+player_count = 2
+action_count_per_square=unit_action_count+cart_action_count+city_action_count
+state_dim_per_square = player_count*(unit_state_dim+cart_state_dim+city_state_dim)+resources_state_dim*num_resources
+
+
+
+#directory used
 root ='/home/pooja/PycharmProjects/rsna_cnn_classification/'
 dataCreated = root+'/data/dataCreated/'
 raw_data=root+ '/data/'
 image_loc =dataCreated +'/mixed/'
 blank_loc =dataCreated + '/auxilary/'
-
-
-#data_loader
-data_loader_param =rsna_param
-data_loader_param.base_loc=image_loc
-data_loader_param.blank_loc=blank_loc
-data_loader_param.data_frame_path=dataCreated+'image_info/'+rsna_param.data_frame_path
-data_loader_param.label=raw_data+rsna_param.label
-data_loader = rsna_loader
-
-#Model
-model_param = Model1_nii
-model =modelling_3d
-
-#loss function
-loss_func =BCELoss(loss_func=nn.BCELoss())
-
-
-# metricSheetPath = root / 'metricSheet2.csv'
 saveDirectory = root + '/outputs/weights/'
 device = 'cpu'
 config_id = str(os.getcwd()).split()[-1]
 startTime = time.time()
-
-lr = 0.05
-
-epoch = 200
-
 random.seed(23)
 
-
-  #BCELoss pixel_shape=(28,28)
-
-
-image_scale=None
-pre_trained_model ="//home/pooja/Downloads/last.pth"
-#pre_trained_model =root+"/outputs/weights/rsna_9.pth"
-
-pre_trained_model ='/home/pooja/Downloads/rsna_20.pth'
-#pre_trained_model =None
-#'/home/pooja/PycharmProjects/digitRecognizer/rough/localization/fold0/checkpoints/train.17.pth'
