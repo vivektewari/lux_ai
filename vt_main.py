@@ -1,5 +1,5 @@
 from kaggle_environments import make
-from agent import agent
+from agent import agent_vt
 from lux.game import Game
 def agent_dummmy(observation, configuration):
         global game_state
@@ -16,8 +16,10 @@ def agent_dummmy(observation, configuration):
         c=game_state
         actions = ['m u_1 e', 'm u_2 e']
         return actions
-
-
-env = make("lux_ai_2021", configuration={"seed": 562124210, "loglevel": 2, "annotations": True}, debug=True)
-steps = env.run([agent, "simple_agent"])
-env.render(mode="ipython", width=1200, height=800)
+episodes=100
+size=32
+for eps in range(episodes):
+    print("=== Episode {} ===".format(eps))
+    env = make("lux_ai_2021", configuration={"seed": 562124210, "loglevel": 2, "annotations": True,"width":size, "height":size}, debug=True)
+    steps = env.run([agent_vt, "simple_agent"])
+    env.render(mode="ipython", width=1200, height=800)

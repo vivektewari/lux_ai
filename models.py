@@ -13,7 +13,7 @@ class NeuralNet(nn.Module):
         for i in range(len(self.layers)):
             x=self.layers[i](x)
             x=self.act_funcs[i](x)
-        return x
+        return x*10
 
     @staticmethod
     def init_layer(layer):

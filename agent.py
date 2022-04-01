@@ -21,7 +21,7 @@ DIRECTIONS = Constants.DIRECTIONS
 game_state = None
 
 
-def agent(observation, configuration):
+def agent_vt(observation, configuration):
     """
     Algorithm:
     initialization for step 0>collects state from game_state_object> use fn:input state to get state in tensor>execute fn:model.predict to get
@@ -32,7 +32,7 @@ def agent(observation, configuration):
     :param configuration:
     :return: Actions in form of string list
     """
-    global game_state,model,map_size,last_q_s_a,last_player_units,criterion,optimizer
+    global game_state,model,map_size,last_q_s_a,last_player_units,criterion,optimizer,last_reward
 
     ### Do not edit ###
     if observation["step"] == 0:
@@ -46,22 +46,30 @@ def agent(observation, configuration):
         model_param_= get_dict_from_class(model_param)
         model_param_['sizes'][0]=(map_size**2)*state_dim_per_square+1
         model_param_['sizes'][-1]=(map_size**2)*action_count_per_square
-        model = NeuralNet(**model_param_)
-
-        optimizer = optim.SGD(model.parameters(), lr=lr)
+        if "model" not in  globals():
+            if pretrained is None:
+                model = NeuralNet(**model_param_)
+                optimizer = optim.SGD(model.parameters(), lr=lr)
+                count_parameters(model)
         # getting model params and model|stop
         # last state initialization
         last_q_s_a = None
         last_player_units=None
+        last_reward=(observation['reward']%10000)*1+10*(int(observation['reward']/10000))
     else:
         game_state._update(observation["updates"])
-    actions = []
+
     state_tensor,player_units = input_state(game_state,observation)  # state tensor:1d player_units:unit_kkeper object
-    model_output = model(state_tensor)  # output:1d
+    model_output = model(state_tensor) # output:1d
+    print(torch.max(model_output).detach(),torch.mean(model_output).detach(),torch.min(model_output).detach())
+
     q_s_a= model_output.reshape((map_size, map_size, action_count_per_square)) # reshaping to position*actions
-    actions,player_unit_dict=choose_action(action_value=q_s_a,player_units=player_units ,game_map=game_state.map)
+    actions,player_unit_dict=choose_action(action_value=q_s_a,player_units=player_units ,game_map=game_state.map,greedy_epsilon=greedy_episilon)
     if last_q_s_a is not None:#update the Q learning matrix
-        reward = observation['reward']
+        current_reward=(observation['reward']%10000)*1+10*(int(observation['reward']/10000))
+        #current_reward = observation['reward']
+        reward=current_reward-last_reward
+
         for u in  last_player_units:
             if u.choosen_action_index !=-1:
                 q_last_state=last_q_s_a[u.obj.pos.x,u.obj.pos.y,u.get_index()]
@@ -70,12 +78,12 @@ def agent(observation, configuration):
                 temporal_difference=reward+gamma*q_state-q_last_state
                 q_last_changed = q_last_state + step_size*temporal_difference
                 last_q_s_a[u.obj.pos.x,u.obj.pos.y, u.get_index()]=q_last_changed
-
+        last_reward=current_reward
         #model fitting prep and run
         model = perform_fit(model=model,x=state_tensor,y=last_q_s_a.flatten(),data_loader=data_loader,criterion=criterion,optimizer=optimizer)
     last_player_units=player_units
     last_q_s_a = q_s_a
-    print(actions)
+    #print(actions)
     return actions
 
 

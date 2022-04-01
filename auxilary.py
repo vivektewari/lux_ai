@@ -1,10 +1,12 @@
 
 import torch
+import numpy as np
 from catalyst.dl import SupervisedRunner, CallbackOrder, Callback, CheckpointCallback
 from dataLoaders import lux_ai_data
 from torch.utils.data import Dataset, DataLoader
 from lux.game_objects import   Unit,CityTile
-from config import unit_action_count,cart_action_count,city_action_count,resources_state_dim,num_resources,unit_state_dim,city_state_dim,player_count
+from config import unit_action_count,cart_action_count,city_action_count,resources_state_dim,num_resources,unit_state_dim,city_state_dim,player_count,saveDirectory
+from callbacks import MetricsCallback
 class unit_keeper(Unit,CityTile):
     def __init__(self,type,id,object,action_value=0):
         self.type=['worker','cart','city_tile'][type]
@@ -22,18 +24,48 @@ class unit_keeper(Unit,CityTile):
         :return: list|player action
         """
         direction='cewns'
+        if self.choosen_action_index==0:return None
         if self.type in ('worker','cart'):
             if self.choosen_action_index<5:
                 return self.move(direction[self.choosen_action_index])
             elif self.choosen_action_index == 5 and self.obj.can_build(game_map):
                 return self.obj.build_city()
+            elif self.choosen_action_index == 6 :
+                return self.pillage()
         else:
             if self.choosen_action_index==1:
                 return self.obj.research()
-            elif self.choosen_action_index == 2 and self.obj.can_build(game_map):
+            elif self.choosen_action_index == 2 :
                 return self.obj.build_worker()
-        return None
+        raise ("more action than planned")
+    def action_value_update(self,action_value,game_map):
+        """
+        changes value to -1 for actions which cannot be taken
+        :param action_value:
+        :param game_map:
+        :return:
+        """
+        if self.type in ('worker','cart'):
+            if not self.obj.can_act():
+                action_value[1:5]=-1
+        if self.type in ('worker'):
+            if self.type =='worker' and not self.obj.can_build(game_map) :
+                action_value[5] = -1
+        return action_value
 
+
+    def get_action(self,action_value,game_map,greedy_epsilon):
+        action_count_mapping={'worker':range(unit_action_count),'cart':range(unit_action_count,cart_action_count),
+                              'city_tile':range(cart_action_count+unit_action_count,cart_action_count+unit_action_count+city_action_count)}
+        action_value = self.action_value_update(
+            action_value[self.obj.pos.x, self.obj.pos.y, action_count_mapping[self.type]], game_map)
+        if torch.rand(1) < greedy_epsilon:
+                self.choosen_action_index = np.random.choice(len(action_value))
+                self.action_value = action_value[self.choosen_action_index]
+                if self.action_value==-1:self.choosen_action_index=0
+                self.action_value = action_value[self.choosen_action_index]
+        else:
+                self.action_value, self.choosen_action_index = torch.max(action_value, dim=0)
 
 
     def get_index(self):
@@ -42,6 +74,65 @@ class unit_keeper(Unit,CityTile):
         elif self.type=='cart':return self.choosen_action_index+unit_action_count
         else: return self.choosen_action_index+unit_action_count+cart_action_count
 
+
+def choose_action(action_value,player_units,game_map,greedy_epsilon=0.1):
+    """
+    provides the action set and attched value to player units
+    algo: reshape the model output>apply argmax>get the action based on argmax> attch the value to player_units
+    :param y:r=tensor|output from neural net model
+    :param player_units: record of all the unit player is having
+    :return:[[]]|action sequence, {id:player_unt} player_units from parameter have updated value function
+    """
+    action_list=[]
+    player_units_dict={}
+
+    for i in player_units:
+        i.get_action(action_value,game_map,greedy_epsilon)
+        action=i.submission_action_interface(game_map)
+        if action is not None :action_list.append(action)
+        player_units_dict[i.id]=i
+    return action_list,player_units_dict
+
+
+def  perform_fit(model,x,y,data_loader,criterion,optimizer):
+    """
+    takes current model and x and y to update the model.
+    Algo:create dataloaders, and pass this to catalyst runner to get ned fitted model.
+    :param model:  N
+    :param x:
+    :param y:
+    :param data_loader:
+    :param criterion:
+    :param optimizer:
+    :return:
+    """
+
+
+
+    loaders = {
+        "train": DataLoader(data_loader(state_array=x, y_values=y),
+                            batch_size=1,
+                            shuffle=False,
+                            num_workers=1,
+                            pin_memory=True,
+                            drop_last=False)}
+    callback=[MetricsCallback(input_key="targets", output_key="logits",
+    directory=saveDirectory, model_name='lux_ai')]
+    runner = SupervisedRunner(
+        output_key="logits",
+        input_key="image_pixels",
+        target_key="targets")
+    runner.train(
+        model=model,
+        criterion=criterion,
+        loaders=loaders,
+        optimizer=optimizer,
+        num_epochs=1,
+        verbose=True,
+        logdir=f"fold0",
+        callbacks=callback,
+    )
+    return runner.model
 def input_state(game_state,observation):
     """
     Takes input from game object to form input to Q(state,action). This function is implemented using neural network
@@ -91,68 +182,6 @@ def input_state(game_state,observation):
             player_units.append(temp_unit)
 
     return state,player_units
-
-def choose_action(action_value,player_units,game_map):
-    """
-    provides the action set and attched value to player units
-    algo: reshape the model output>apply argmax>get the action based on argmax> attch the value to player_units
-    :param y:r=tensor|output from neural net model
-    :param player_units: record of all the unit player is having
-    :return:[[]]|action sequence, {id:player_unt} player_units from parameter have updated value function
-    """
-    action_list=[]
-    player_units_dict={}
-    for i in player_units:
-
-        if i.type==0:
-            i.action_value, i.choosen_action_index =torch.max(action_value[i.obj.pos.x,i.obj.pos.y,:unit_action_count])
-        elif i.type == 1:
-            i.action_value, i.choosen_action_index = torch.max(action_value[i.obj.pos.x,i.obj.pos.y, unit_action_count:unit_action_count+cart_action_count])
-        elif i.type == 'city_tile':
-            i.action_value, i.choosen_action_index = torch.max(action_value[i.obj.pos.x,i.obj.pos.y,unit_action_count+cart_action_count:],dim=0)
-        action=i.submission_action_interface(game_map)
-        if action is not None :action_list.append(action)
-        player_units_dict[i.id]=i
-    return action_list,player_units_dict
-
-
-def  perform_fit(model,x,y,data_loader,criterion,optimizer):
-    """
-    takes current model and x and y to update the model.
-    Algo:create dataloaders, and pass this to catalyst runner to get ned fitted model.
-    :param model:  N
-    :param x:
-    :param y:
-    :param data_loader:
-    :param criterion:
-    :param optimizer:
-    :return:
-    """
-
-
-
-    loaders = {
-        "train": DataLoader(data_loader(state_array=x, y_values=y),
-                            batch_size=1,
-                            shuffle=False,
-                            num_workers=1,
-                            pin_memory=True,
-                            drop_last=False)}
-    runner = SupervisedRunner(
-        output_key="logits",
-        input_key="image_pixels",
-        target_key="targets")
-    runner.train(
-        model=model,
-        criterion=criterion,
-        loaders=loaders,
-        optimizer=optimizer,
-        num_epochs=1,
-        verbose=True,
-        logdir=f"fold0",
-        callbacks=[],
-    )
-    return runner.model
 
 if __name__ == "__main__":
     from kaggle_environments import make
